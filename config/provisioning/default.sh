@@ -23,7 +23,7 @@ NODES=(
 )
 
 CHECKPOINT_MODELS=(
-    "https://civitai.com/api/download/models/2537327?type=Model&format=SafeTensor&size=full&fp=bf16"
+    
 )
 
 UNET_MODELS=(
@@ -35,7 +35,7 @@ LORA_MODELS=(
 )
 
 VAE_MODELS=(
-
+    "https://huggingface.co/Anzhc/Z-Image_Anime_VAE/blob/main/FLUX%20Anime%20VAE%20B2.safetensors"
    
 )
 
