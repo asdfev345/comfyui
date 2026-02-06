@@ -20,6 +20,8 @@ PIP_PACKAGES=(
 NODES=(
     "https://github.com/ltdrdata/ComfyUI-Manager"
     "https://github.com/cubiq/ComfyUI_essentials"
+    "https://github.com/AlekPet/ComfyUI_Custom_Nodes_AlekPet"
+    "https://github.com/kijai/ComfyUI-KJNodes"
 )
 
 CHECKPOINT_MODELS=(
@@ -35,7 +37,7 @@ LORA_MODELS=(
 )
 
 VAE_MODELS=(
-    "https://huggingface.co/Anzhc/Z-Image_Anime_VAE/blob/main/FLUX%20Anime%20VAE%20B2.safetensors"
+    
    
 )
 
