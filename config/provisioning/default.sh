@@ -101,8 +101,98 @@ provisioning_get_pip_packages() {
   fi
 }
 
+# ============================================================
+# HF_TRANSFER SUPPORT (added)
+# ============================================================
+
+# Try to install hf_transfer and enable it for huggingface_hub
+provisioning_enable_hf_transfer() {
+  # Only best-effort; if install fails, we still fall back to aria2/curl.
+  log "Enabling hf_transfer (best-effort)..."
+  pip_install -q hf_transfer huggingface_hub || true
+  export HF_HUB_ENABLE_HF_TRANSFER=1
+}
+
+# Parse HF "resolve" URLs and download via huggingface_hub (hf_transfer if available)
+# Returns 0 if download succeeded, 1 if not applicable or failed.
+provisioning_hf_transfer_download() {
+  local dir="$1"
+  local url="$2"
+
+  # Only handle huggingface.co/.../resolve/... style
+  if [[ ! "$url" =~ ^https://huggingface\.co/ ]]; then
+    return 1
+  fi
+  if [[ "$url" != *"/resolve/"* ]]; then
+    return 1
+  fi
+
+  # Strip query
+  local clean="${url%%\?*}"
+
+  # Expected: https://huggingface.co/<repo_id>/resolve/<rev>/<path>
+  # We will parse repo_id, rev, path
+  # Remove prefix:
+  local rest="${clean#https://huggingface.co/}"
+
+  local repo_id="${rest%%/resolve/*}"
+  local after="${rest#${repo_id}/resolve/}"
+  local rev="${after%%/*}"
+  local file_path="${after#${rev}/}"
+
+  if [[ -z "$repo_id" || -z "$rev" || -z "$file_path" || "$file_path" == "$after" ]]; then
+    return 1
+  fi
+
+  mkdir -p "$dir"
+
+  log "HF (hf_transfer) attempt: repo=$repo_id rev=$rev file=$file_path -> $dir"
+
+  # Use python huggingface_hub to download
+  # We use cache_dir inside /workspace to persist within instance.
+  # We copy the downloaded file into dir with its basename.
+  "$PYTHON_BIN" - <<'PY' "$repo_id" "$rev" "$file_path" "$dir"
+import os, sys
+repo_id, rev, file_path, out_dir = sys.argv[1:5]
+token = os.environ.get("HF_TOKEN") or None
+
+try:
+    from huggingface_hub import hf_hub_download
+except Exception as e:
+    print("[provision] huggingface_hub not available:", e)
+    sys.exit(2)
+
+try:
+    # hf_transfer is automatically used when HF_HUB_ENABLE_HF_TRANSFER=1 and package is installed
+    local_path = hf_hub_download(
+        repo_id=repo_id,
+        filename=file_path,
+        revision=rev,
+        token=token,
+        # put cache in workspace to avoid filling root
+        cache_dir="/workspace/.hf_cache",
+    )
+    os.makedirs(out_dir, exist_ok=True)
+    dst = os.path.join(out_dir, os.path.basename(file_path))
+    # Copy (not symlink) to ensure Comfy sees it directly in models dir
+    import shutil
+    shutil.copy2(local_path, dst)
+    print(f"[provision] HF (hf_transfer) downloaded OK -> {dst}")
+except Exception as e:
+    print("[provision] HF (hf_transfer) failed:", repr(e))
+    sys.exit(1)
+PY
+
+  # python exits 0 on success, nonzero on fail
+  if [[ $? -eq 0 ]]; then
+    return 0
+  fi
+  return 1
+}
+
 # ------------------------------------------------------------
 # Downloader: Civitai uses Content-Disposition; HF uses basename
+# (HuggingFace now tries hf_transfer first)
 # ------------------------------------------------------------
 provisioning_download_to_dir() {
   local dir="$1"
@@ -128,6 +218,15 @@ provisioning_download_to_dir() {
 
   log "Downloading into $dir"
   log "  from: $final_url"
+
+  # ---- HuggingFace: try hf_transfer path first (added) ----
+  if [[ "$url" =~ huggingface\.co ]]; then
+    if provisioning_hf_transfer_download "$dir" "$final_url"; then
+      return 0
+    else
+      log "HF (hf_transfer) unavailable/failed -> fallback to aria2/wget/curl"
+    fi
+  fi
 
   # ---- Civitai: use content-disposition to get true filename ----
   if [[ "$url" =~ civitai\.com ]]; then
@@ -231,6 +330,9 @@ provisioning_start() {
   provisioning_get_apt_packages
   provisioning_get_nodes
   provisioning_get_pip_packages
+
+  # Enable hf_transfer once before downloads (added)
+  provisioning_enable_hf_transfer
 
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/checkpoints"    "${CHECKPOINT_MODELS[@]}"
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/unet"           "${UNET_MODELS[@]}"
