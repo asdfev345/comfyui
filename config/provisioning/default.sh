@@ -3,19 +3,15 @@ set -euo pipefail
 
 # ============================================================
 # USER CONFIG
-#  - Edit only this section for your own workflow/model setup.
 # ============================================================
 
-# Optional apt packages (installed once at provisioning time)
 APT_PACKAGES=(
   "aria2"
 )
 
-# Optional pip packages (installed once at provisioning time)
 PIP_PACKAGES=(
 )
 
-# Custom nodes to clone/update (requirements.txt auto-installed if present)
 NODES=(
   "https://github.com/ltdrdata/ComfyUI-Manager"
   "https://github.com/cubiq/ComfyUI_essentials"
@@ -23,38 +19,34 @@ NODES=(
   "https://github.com/kijai/ComfyUI-KJNodes"
 )
 
-# --- Standard ComfyUI-ish model categories (downloaded into /workspace/ComfyUI/models/...) ---
 CHECKPOINT_MODELS=(
-  "https://civitai.com/api/download/models/2167369?type=Model&format=SafeTensor&size=pruned&fp=fp16"
+  # Example Civitai:
+  "https://civitai.com/api/download/models/2514310?type=Model&format=SafeTensor&size=pruned&fp=fp16"
 )
-UNET_MODELS=(
-)
-LORA_MODELS=(
-)
+
+UNET_MODELS=( )
+LORA_MODELS=( )
+
 VAE_MODELS=(
   "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true"
 )
-UPSCALE_MODELS=(
-)
-CONTROLNET_MODELS=(
-)
 
-# --- Non-standard folders (for workflows like Anima/Qwen, etc.) ---
-# Downloaded into:
-#   /workspace/ComfyUI/models/diffusion_models
-#   /workspace/ComfyUI/models/text_encoders
+UPSCALE_MODELS=( )
+CONTROLNET_MODELS=( )
+
 DIFFUSION_MODELS=(
   "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-preview.safetensors?download=true"
 )
+
 TEXT_ENCODER_MODELS=(
   "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors?download=true"
 )
 
-# If true, re-download files even if they already exist
+# Optional: force re-download even if file exists
 FORCE_DOWNLOAD="${FORCE_DOWNLOAD:-false}"
 
 # ============================================================
-# DO NOT EDIT BELOW (unless you know what you're doing)
+# DO NOT EDIT BELOW
 # ============================================================
 
 log(){ echo "[provision] $*"; }
@@ -63,15 +55,10 @@ WORKSPACE="${WORKSPACE:-/workspace}"
 COMFY_WORKSPACE="/workspace/ComfyUI"
 INTERNAL_COMFY="/opt/workspace-internal/ComfyUI"
 
-# Force stable python/pip locations for provisioning (fixes "python: command not found")
 PYTHON_BIN="${PYTHON_BIN:-/venv/main/bin/python}"
 PIP_BIN="${PIP_BIN:-/venv/main/bin/pip}"
 
-APT_INSTALL="${APT_INSTALL:-apt-get install -y --no-install-recommends}"
-
-# 0) Always normalize paths so /workspace/ComfyUI is the canonical path
 normalize_comfy_paths() {
-  # If internal exists, make /workspace/ComfyUI point to it.
   if [[ -d "$INTERNAL_COMFY" && -f "$INTERNAL_COMFY/main.py" ]]; then
     if [[ -e "$COMFY_WORKSPACE" && ! -L "$COMFY_WORKSPACE" ]]; then
       log "Backing up existing $COMFY_WORKSPACE -> ${COMFY_WORKSPACE}.bak"
@@ -81,7 +68,6 @@ normalize_comfy_paths() {
     log "Linked $COMFY_WORKSPACE -> $INTERNAL_COMFY"
   fi
 
-  # Hard fail if we still can't find main.py under /workspace/ComfyUI
   if [[ ! -f "$COMFY_WORKSPACE/main.py" ]]; then
     log "ERROR: ComfyUI not found at $COMFY_WORKSPACE (main.py missing)"
     log "Check whether image path changed. INTERNAL_COMFY=$INTERNAL_COMFY"
@@ -89,32 +75,22 @@ normalize_comfy_paths() {
   fi
 }
 
+APT_INSTALL="${APT_INSTALL:-apt-get install -y --no-install-recommends}"
+
 pip_install() {
-  # Prefer ai-dock pip if provided
   if [[ -n "${COMFYUI_VENV_PIP:-}" ]] && command -v "${COMFYUI_VENV_PIP}" >/dev/null 2>&1; then
     "${COMFYUI_VENV_PIP}" install --no-cache-dir "$@"
     return 0
   fi
-
-  # Prefer venv pip if present
   if [[ -x "$PIP_BIN" ]]; then
     "$PIP_BIN" install --no-cache-dir "$@"
     return 0
   fi
-
-  # Fallback to venv python -m pip
   if [[ -x "$PYTHON_BIN" ]]; then
     "$PYTHON_BIN" -m pip install --no-cache-dir "$@"
     return 0
   fi
-
-  # Last resort
   pip install --no-cache-dir "$@"
-}
-
-url_basename() {
-  local u="${1%%\?*}"
-  echo "${u##*/}"
 }
 
 provisioning_get_apt_packages() {
@@ -132,30 +108,22 @@ provisioning_get_pip_packages() {
   fi
 }
 
-provisioning_download_to_file() {
-  local out_file="$1"
+# NEW: download into directory using Content-Disposition filename
+provisioning_download_to_dir() {
+  local dir="$1"
   local url="$2"
 
-  mkdir -p "$(dirname "$out_file")"
-
-  if [[ -f "$out_file" && "$FORCE_DOWNLOAD" != "true" ]]; then
-    log "Skip (exists): $out_file"
-    return 0
-  fi
-  if [[ -f "$out_file" && "$FORCE_DOWNLOAD" == "true" ]]; then
-    log "Force re-download: $out_file"
-    rm -f "$out_file"
-  fi
+  mkdir -p "$dir"
 
   local auth_header=""
   local final_url="$url"
 
-  # HuggingFace: auth header if provided
+  # HuggingFace auth header (optional)
   if [[ -n "${HF_TOKEN:-}" ]] && [[ "$url" =~ ^https://([a-zA-Z0-9_-]+\.)?huggingface\.co(/|$|\?) ]]; then
     auth_header="Authorization: Bearer ${HF_TOKEN}"
   fi
 
-  # Civitai: append token as query param (handles redirects reliably)
+  # Civitai token (append as query param)
   if [[ -n "${CIVITAI_TOKEN:-}" ]] && [[ "$url" =~ ^https://([a-zA-Z0-9_-]+\.)?civitai\.com(/|$|\?) ]]; then
     if [[ "$url" == *"?"* ]]; then
       final_url="${url}&token=${CIVITAI_TOKEN}"
@@ -164,15 +132,16 @@ provisioning_download_to_file() {
     fi
   fi
 
-  log "Downloading -> $out_file"
+  log "Downloading into dir: $dir"
   log "  from: $final_url"
 
-  # Prefer aria2c if available (faster, resumable)
+  # Prefer aria2c if available
   if command -v aria2c >/dev/null 2>&1; then
+    # --content-disposition uses server-provided filename (fixes civitai numeric names)
     if [[ -n "$auth_header" ]]; then
-      aria2c -x 16 -s 16 -k 1M --header="$auth_header" -o "$(basename "$out_file")" -d "$(dirname "$out_file")" "$final_url"
+      aria2c -x 16 -s 16 -k 1M --content-disposition --header="$auth_header" -d "$dir" "$final_url"
     else
-      aria2c -x 16 -s 16 -k 1M -o "$(basename "$out_file")" -d "$(dirname "$out_file")" "$final_url"
+      aria2c -x 16 -s 16 -k 1M --content-disposition -d "$dir" "$final_url"
     fi
     return 0
   fi
@@ -180,21 +149,22 @@ provisioning_download_to_file() {
   # wget fallback
   if command -v wget >/dev/null 2>&1; then
     if [[ -n "$auth_header" ]]; then
-      wget --header="$auth_header" -O "$out_file" "$final_url"
+      wget --header="$auth_header" --content-disposition --show-progress -qnc -P "$dir" "$final_url"
     else
-      wget -O "$out_file" "$final_url"
+      wget --content-disposition --show-progress -qnc -P "$dir" "$final_url"
     fi
     return 0
   fi
 
-  # curl fallback
+  # curl fallback: -OJ respects content-disposition (saves filename)
   if [[ -n "$auth_header" ]]; then
-    curl -fL -H "$auth_header" -o "$out_file" "$final_url"
+    (cd "$dir" && curl -fL -H "$auth_header" -OJ "$final_url")
   else
-    curl -fL -o "$out_file" "$final_url"
+    (cd "$dir" && curl -fL -OJ "$final_url")
   fi
 }
 
+# UPDATED: now uses content-disposition downloader (no more URL basename naming)
 provisioning_get_models_dir_urlonly() {
   local dir="$1"; shift || true
   local arr=("$@")
@@ -207,10 +177,7 @@ provisioning_get_models_dir_urlonly() {
   log "Downloading ${#arr[@]} file(s) to $dir"
 
   for url in "${arr[@]}"; do
-    local name
-    name="$(url_basename "$url")"
-    [[ -z "$name" ]] && { log "WARNING: bad url basename, skip: $url"; continue; }
-    provisioning_download_to_file "$dir/$name" "$url" || log "WARNING: download failed (continuing): $url"
+    provisioning_download_to_dir "$dir" "$url" || log "WARNING: download failed (continuing): $url"
   done
 }
 
@@ -257,15 +224,15 @@ provisioning_print_end() {
 
 provisioning_start() {
   normalize_comfy_paths
-  log "CANONICAL COMFY PATH: $COMFY_WORKSPACE"
 
+  log "CANONICAL COMFY PATH: $COMFY_WORKSPACE"
   provisioning_print_header
 
   provisioning_get_apt_packages
   provisioning_get_nodes
   provisioning_get_pip_packages
 
-  # Standard model directories
+  # Standard model dirs (under /workspace/ComfyUI)
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/checkpoints"    "${CHECKPOINT_MODELS[@]}"
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/unet"           "${UNET_MODELS[@]}"
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/loras"          "${LORA_MODELS[@]}"
@@ -273,7 +240,7 @@ provisioning_start() {
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/vae"            "${VAE_MODELS[@]}"
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/upscale_models" "${UPSCALE_MODELS[@]}"
 
-  # Non-standard model directories
+  # Non-standard dirs (still under /workspace/ComfyUI)
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/diffusion_models" "${DIFFUSION_MODELS[@]}"
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/text_encoders"   "${TEXT_ENCODER_MODELS[@]}"
 
