@@ -19,7 +19,6 @@ NODES=(
   "https://github.com/kijai/ComfyUI-KJNodes"
 )
 
-# Example Civitai URL (will save as real filename via Content-Disposition)
 CHECKPOINT_MODELS=(
   "https://civitai.com/api/download/models/2514310?type=Model&format=SafeTensor&size=pruned&fp=fp16"
   "https://civitai.com/api/download/models/2167369?type=Model&format=SafeTensor&size=pruned&fp=fp16"
@@ -28,7 +27,6 @@ CHECKPOINT_MODELS=(
 UNET_MODELS=( )
 LORA_MODELS=( )
 
-# HF URLs (will save as URL basename, e.g. qwen_image_vae.safetensors)
 VAE_MODELS=(
   "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true"
 )
@@ -57,7 +55,29 @@ INTERNAL_COMFY="/opt/workspace-internal/ComfyUI"
 PYTHON_BIN="${PYTHON_BIN:-/venv/main/bin/python}"
 PIP_BIN="${PIP_BIN:-/venv/main/bin/pip}"
 
-# Force canonical /workspace/ComfyUI path (NO BACKUP)
+APT_INSTALL="${APT_INSTALL:-apt-get install -y --no-install-recommends}"
+
+# ---- hardening state ----
+NODE_REQ_FAILS=()
+MODEL_DL_FAILS=()
+
+# If you want to fail the whole script when any model download fails, set:
+#   export FAIL_ON_MODEL_DL=1
+FAIL_ON_MODEL_DL="${FAIL_ON_MODEL_DL:-0}"
+
+# Unified HF token env support
+get_hf_token() {
+  if [[ -n "${HF_TOKEN:-}" ]]; then
+    echo "$HF_TOKEN"
+    return 0
+  fi
+  if [[ -n "${HUGGINGFACE_HUB_TOKEN:-}" ]]; then
+    echo "$HUGGINGFACE_HUB_TOKEN"
+    return 0
+  fi
+  echo ""
+}
+
 normalize_comfy_paths() {
   if [[ -d "$INTERNAL_COMFY" && -f "$INTERNAL_COMFY/main.py" ]]; then
     ln -sfn "$INTERNAL_COMFY" "$COMFY_WORKSPACE"
@@ -69,8 +89,6 @@ normalize_comfy_paths() {
     exit 1
   fi
 }
-
-APT_INSTALL="${APT_INSTALL:-apt-get install -y --no-install-recommends}"
 
 pip_install() {
   if [[ -x "$PIP_BIN" ]]; then
@@ -89,8 +107,13 @@ pip_install() {
 provisioning_get_apt_packages() {
   if [[ ${#APT_PACKAGES[@]} -gt 0 ]]; then
     log "Installing apt packages: ${APT_PACKAGES[*]}"
-    sudo apt-get update
-    sudo $APT_INSTALL "${APT_PACKAGES[@]}"
+    if command -v sudo >/dev/null 2>&1; then
+      sudo apt-get update
+      sudo $APT_INSTALL "${APT_PACKAGES[@]}"
+    else
+      apt-get update
+      $APT_INSTALL "${APT_PACKAGES[@]}"
+    fi
   fi
 }
 
@@ -102,24 +125,28 @@ provisioning_get_pip_packages() {
 }
 
 # ============================================================
-# HF_TRANSFER SUPPORT (added)
+# HF_TRANSFER SUPPORT (hardened)
 # ============================================================
 
-# Try to install hf_transfer and enable it for huggingface_hub
 provisioning_enable_hf_transfer() {
-  # Only best-effort; if install fails, we still fall back to aria2/curl.
   log "Enabling hf_transfer (best-effort)..."
-  pip_install -q hf_transfer huggingface_hub || true
-  export HF_HUB_ENABLE_HF_TRANSFER=1
+  # Don't let this kill the script
+  set +e
+  pip_install -q hf_transfer huggingface_hub
+  local rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    log "hf_transfer/huggingface_hub install failed (continuing with fallback)."
+  else
+    export HF_HUB_ENABLE_HF_TRANSFER=1
+  fi
 }
 
-# Parse HF "resolve" URLs and download via huggingface_hub (hf_transfer if available)
-# Returns 0 if download succeeded, 1 if not applicable or failed.
+# Returns 0 on success, 1 on not applicable or failed (WITHOUT killing script)
 provisioning_hf_transfer_download() {
   local dir="$1"
   local url="$2"
 
-  # Only handle huggingface.co/.../resolve/... style
   if [[ ! "$url" =~ ^https://huggingface\.co/ ]]; then
     return 1
   fi
@@ -127,12 +154,7 @@ provisioning_hf_transfer_download() {
     return 1
   fi
 
-  # Strip query
   local clean="${url%%\?*}"
-
-  # Expected: https://huggingface.co/<repo_id>/resolve/<rev>/<path>
-  # We will parse repo_id, rev, path
-  # Remove prefix:
   local rest="${clean#https://huggingface.co/}"
 
   local repo_id="${rest%%/resolve/*}"
@@ -145,16 +167,14 @@ provisioning_hf_transfer_download() {
   fi
 
   mkdir -p "$dir"
-
   log "HF (hf_transfer) attempt: repo=$repo_id rev=$rev file=$file_path -> $dir"
 
-  # Use python huggingface_hub to download
-  # We use cache_dir inside /workspace to persist within instance.
-  # We copy the downloaded file into dir with its basename.
+  # Run python with set +e so failure doesn't abort whole script (critical)
+  set +e
   "$PYTHON_BIN" - <<'PY' "$repo_id" "$rev" "$file_path" "$dir"
-import os, sys
+import os, sys, shutil
 repo_id, rev, file_path, out_dir = sys.argv[1:5]
-token = os.environ.get("HF_TOKEN") or None
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN") or None
 
 try:
     from huggingface_hub import hf_hub_download
@@ -163,28 +183,26 @@ except Exception as e:
     sys.exit(2)
 
 try:
-    # hf_transfer is automatically used when HF_HUB_ENABLE_HF_TRANSFER=1 and package is installed
     local_path = hf_hub_download(
         repo_id=repo_id,
         filename=file_path,
         revision=rev,
         token=token,
-        # put cache in workspace to avoid filling root
         cache_dir="/workspace/.hf_cache",
     )
     os.makedirs(out_dir, exist_ok=True)
     dst = os.path.join(out_dir, os.path.basename(file_path))
-    # Copy (not symlink) to ensure Comfy sees it directly in models dir
-    import shutil
     shutil.copy2(local_path, dst)
     print(f"[provision] HF (hf_transfer) downloaded OK -> {dst}")
+    sys.exit(0)
 except Exception as e:
     print("[provision] HF (hf_transfer) failed:", repr(e))
     sys.exit(1)
 PY
+  local rc=$?
+  set -e
 
-  # python exits 0 on success, nonzero on fail
-  if [[ $? -eq 0 ]]; then
+  if [[ $rc -eq 0 ]]; then
     return 0
   fi
   return 1
@@ -192,7 +210,6 @@ PY
 
 # ------------------------------------------------------------
 # Downloader: Civitai uses Content-Disposition; HF uses basename
-# (HuggingFace now tries hf_transfer first)
 # ------------------------------------------------------------
 provisioning_download_to_dir() {
   local dir="$1"
@@ -202,12 +219,13 @@ provisioning_download_to_dir() {
   local final_url="$url"
   local auth_header=""
 
-  # HF auth header (optional)
-  if [[ -n "${HF_TOKEN:-}" ]] && [[ "$url" =~ huggingface\.co ]]; then
-    auth_header="Authorization: Bearer ${HF_TOKEN}"
+  local hf_token
+  hf_token="$(get_hf_token)"
+
+  if [[ -n "$hf_token" ]] && [[ "$url" =~ huggingface\.co ]]; then
+    auth_header="Authorization: Bearer ${hf_token}"
   fi
 
-  # Civitai token append (optional)
   if [[ -n "${CIVITAI_TOKEN:-}" ]] && [[ "$url" =~ civitai\.com ]]; then
     if [[ "$url" == *"?"* ]]; then
       final_url="${url}&token=${CIVITAI_TOKEN}"
@@ -219,7 +237,7 @@ provisioning_download_to_dir() {
   log "Downloading into $dir"
   log "  from: $final_url"
 
-  # ---- HuggingFace: try hf_transfer path first (added) ----
+  # ---- HuggingFace: try hf_transfer path first ----
   if [[ "$url" =~ huggingface\.co ]]; then
     if provisioning_hf_transfer_download "$dir" "$final_url"; then
       return 0
@@ -228,65 +246,73 @@ provisioning_download_to_dir() {
     fi
   fi
 
-  # ---- Civitai: use content-disposition to get true filename ----
+  # ---- Civitai: use content-disposition ----
   if [[ "$url" =~ civitai\.com ]]; then
+    set +e
     if command -v aria2c >/dev/null 2>&1; then
       aria2c -x 16 -s 16 -k 1M --content-disposition -d "$dir" "$final_url"
-      return 0
-    fi
-    if command -v wget >/dev/null 2>&1; then
+      rc=$?
+    elif command -v wget >/dev/null 2>&1; then
       wget --content-disposition --show-progress -qnc -P "$dir" "$final_url"
-      return 0
+      rc=$?
+    else
+      (cd "$dir" && curl -fL -OJ "$final_url")
+      rc=$?
     fi
-    (cd "$dir" && curl -fL -OJ "$final_url")
-    return 0
+    set -e
+    return $rc
   fi
 
-  # ---- HuggingFace (and general URLs with a real filename): save as URL basename ----
+  # ---- General/HF fallback: save as URL basename ----
   local name="${url%%\?*}"
   name="${name##*/}"
 
-  # If basename is empty or looks like a pure numeric id, fall back to content-disposition
   if [[ -z "$name" || "$name" =~ ^[0-9]+$ ]]; then
+    set +e
     if command -v aria2c >/dev/null 2>&1; then
       if [[ -n "$auth_header" ]]; then
         aria2c -x 16 -s 16 -k 1M --content-disposition --header="$auth_header" -d "$dir" "$final_url"
       else
         aria2c -x 16 -s 16 -k 1M --content-disposition -d "$dir" "$final_url"
       fi
-      return 0
-    fi
-    if [[ -n "$auth_header" ]]; then
-      (cd "$dir" && curl -fL -H "$auth_header" -OJ "$final_url")
+      rc=$?
     else
-      (cd "$dir" && curl -fL -OJ "$final_url")
+      if [[ -n "$auth_header" ]]; then
+        (cd "$dir" && curl -fL -H "$auth_header" -OJ "$final_url")
+      else
+        (cd "$dir" && curl -fL -OJ "$final_url")
+      fi
+      rc=$?
     fi
-    return 0
+    set -e
+    return $rc
   fi
 
+  set +e
   if command -v aria2c >/dev/null 2>&1; then
     if [[ -n "$auth_header" ]]; then
       aria2c -x 16 -s 16 -k 1M --header="$auth_header" -o "$name" -d "$dir" "$final_url"
     else
       aria2c -x 16 -s 16 -k 1M -o "$name" -d "$dir" "$final_url"
     fi
-    return 0
-  fi
-
-  if command -v wget >/dev/null 2>&1; then
+    rc=$?
+  elif command -v wget >/dev/null 2>&1; then
     if [[ -n "$auth_header" ]]; then
       wget --header="$auth_header" -O "$dir/$name" "$final_url"
     else
       wget -O "$dir/$name" "$final_url"
     fi
-    return 0
-  fi
-
-  if [[ -n "$auth_header" ]]; then
-    curl -fL -H "$auth_header" -o "$dir/$name" "$final_url"
+    rc=$?
   else
-    curl -fL -o "$dir/$name" "$final_url"
+    if [[ -n "$auth_header" ]]; then
+      curl -fL -H "$auth_header" -o "$dir/$name" "$final_url"
+    else
+      curl -fL -o "$dir/$name" "$final_url"
+    fi
+    rc=$?
   fi
+  set -e
+  return $rc
 }
 
 provisioning_get_models_dir_urlonly() {
@@ -296,7 +322,14 @@ provisioning_get_models_dir_urlonly() {
     return 0
   fi
   for url in "${arr[@]}"; do
-    provisioning_download_to_dir "$dir" "$url"
+    if ! provisioning_download_to_dir "$dir" "$url"; then
+      log "MODEL DOWNLOAD FAILED: $url"
+      MODEL_DL_FAILS+=("$url")
+      if [[ "$FAIL_ON_MODEL_DL" == "1" ]]; then
+        log "FAIL_ON_MODEL_DL=1 -> exiting due to model download failure."
+        exit 1
+      fi
+    fi
   done
 }
 
@@ -319,9 +352,32 @@ provisioning_get_nodes() {
 
     if [[ -f "$requirements" ]]; then
       log "Installing requirements: $requirements"
-      pip_install -r "$requirements" || true
+      set +e
+      pip_install -r "$requirements"
+      local rc=$?
+      set -e
+      if [[ $rc -ne 0 ]]; then
+        log "Node requirements FAILED: $repo"
+        NODE_REQ_FAILS+=("$repo")
+      fi
     fi
   done
+}
+
+print_summary() {
+  if [[ ${#NODE_REQ_FAILS[@]} -gt 0 ]]; then
+    log "---- Node requirements failures ----"
+    for x in "${NODE_REQ_FAILS[@]}"; do
+      log "  - $x"
+    done
+  fi
+
+  if [[ ${#MODEL_DL_FAILS[@]} -gt 0 ]]; then
+    log "---- Model download failures ----"
+    for x in "${MODEL_DL_FAILS[@]}"; do
+      log "  - $x"
+    done
+  fi
 }
 
 provisioning_start() {
@@ -331,18 +387,18 @@ provisioning_start() {
   provisioning_get_nodes
   provisioning_get_pip_packages
 
-  # Enable hf_transfer once before downloads (added)
   provisioning_enable_hf_transfer
 
-  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/checkpoints"    "${CHECKPOINT_MODELS[@]}"
-  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/unet"           "${UNET_MODELS[@]}"
-  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/loras"          "${LORA_MODELS[@]}"
-  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/controlnet"     "${CONTROLNET_MODELS[@]}"
-  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/vae"            "${VAE_MODELS[@]}"
-  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/upscale_models" "${UPSCALE_MODELS[@]}"
+  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/checkpoints"      "${CHECKPOINT_MODELS[@]}"
+  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/unet"             "${UNET_MODELS[@]}"
+  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/loras"            "${LORA_MODELS[@]}"
+  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/controlnet"       "${CONTROLNET_MODELS[@]}"
+  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/vae"              "${VAE_MODELS[@]}"
+  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/upscale_models"   "${UPSCALE_MODELS[@]}"
   provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/diffusion_models" "${DIFFUSION_MODELS[@]}"
-  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/text_encoders"   "${TEXT_ENCODER_MODELS[@]}"
+  provisioning_get_models_dir_urlonly "${COMFY_WORKSPACE}/models/text_encoders"    "${TEXT_ENCODER_MODELS[@]}"
 
+  print_summary
   log "Provisioning complete."
 }
 
