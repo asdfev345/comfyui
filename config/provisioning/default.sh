@@ -44,6 +44,7 @@ CONTROLNET_MODELS=( )
 
 DIFFUSION_MODELS=(
   "https://civitai.com/api/download/models/2323420?type=Model&format=SafeTensor&size=pruned&fp=fp8"
+  "https://civitai.com/api/download/models/2555640?type=Model&format=SafeTensor&size=full&fp=fp8"
 )
 
 TEXT_ENCODER_MODELS=(
