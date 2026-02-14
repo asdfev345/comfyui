@@ -30,7 +30,7 @@ UNET_MODELS=(
 
 )
 LORA_MODELS=( 
-  "Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors"
+  "https://huggingface.co/Kijai/WanVideo_comfy/resolve/8697fbd00bf062350864a3ff431b077fbc62886d/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors?download=true"
 )
 
 VAE_MODELS=(    
