@@ -43,8 +43,6 @@ UPSCALE_MODELS=(
 CONTROLNET_MODELS=( )
 
 DIFFUSION_MODELS=(
-  "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors?download=true"
-  "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors?download=true"  
   "https://civitai.com/api/download/models/2323420?type=Model&format=SafeTensor&size=pruned&fp=fp8"
 )
 
