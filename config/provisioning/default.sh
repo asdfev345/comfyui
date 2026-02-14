@@ -30,7 +30,7 @@ UNET_MODELS=(
 
 )
 LORA_MODELS=( 
-  "https://civitai.com/api/download/models/1665400?type=Model&format=SafeTensor"
+  "Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors"
 )
 
 VAE_MODELS=(    
@@ -43,8 +43,9 @@ UPSCALE_MODELS=(
 CONTROLNET_MODELS=( )
 
 DIFFUSION_MODELS=(
-  "https://civitai.com/api/download/models/2323420?type=Model&format=SafeTensor&size=pruned&fp=fp8"
-  "https://civitai.com/api/download/models/2555640?type=Model&format=SafeTensor&size=full&fp=fp8"
+  "https://civitai.com/api/download/models/2513182?type=Model&format=SafeTensor&size=pruned&fp=fp8"
+  "https://civitai.com/api/download/models/2555652?type=Model&format=SafeTensor&size=full&fp=fp8"
+  
 )
 
 TEXT_ENCODER_MODELS=(
