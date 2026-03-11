@@ -15,8 +15,7 @@ PIP_PACKAGES=(
 NODES=(
   "https://github.com/ltdrdata/ComfyUI-Manager"
   "https://github.com/cubiq/ComfyUI_essentials"
-  "https://github.com/AlekPet/ComfyUI_Custom_Nodes_AlekPet"
-  "https://github.com/kijai/ComfyUI-KJNodes"
+
 )
 
 CHECKPOINT_MODELS=(
@@ -26,7 +25,7 @@ CHECKPOINT_MODELS=(
 
 CLIP_VISION_MODELS=(
 
-  "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors?download=true"
+
 
 )
 
@@ -37,26 +36,27 @@ UNET_MODELS=(
 
 )
 LORA_MODELS=( 
-  "https://huggingface.co/Kijai/WanVideo_comfy/resolve/8697fbd00bf062350864a3ff431b077fbc62886d/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors?download=true"
+
 )
 
 VAE_MODELS=(    
-  "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors?download=true"
+
+
 )
 
 UPSCALE_MODELS=(  
-  "https://huggingface.co/Kim2091/2x-AnimeSharpV4/resolve/main/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors?download=true"
+
 )
 CONTROLNET_MODELS=( )
 
 DIFFUSION_MODELS=(
-  "https://civitai.com/api/download/models/2513182?type=Model&format=SafeTensor&size=pruned&fp=fp8"
-  "https://civitai.com/api/download/models/2555652?type=Model&format=SafeTensor&size=full&fp=fp8"
+
   
 )
 
 TEXT_ENCODER_MODELS=(
-  "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors?download=true"
+
+
 )
 
 # ============================================================
