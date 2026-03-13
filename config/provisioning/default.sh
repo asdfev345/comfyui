@@ -19,7 +19,7 @@ NODES=(
 )
 
 CHECKPOINT_MODELS=(
- 
+  
 )
 
 
@@ -40,7 +40,7 @@ LORA_MODELS=(
 )
 
 VAE_MODELS=(    
-
+  "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true"
 
 )
 
@@ -50,12 +50,12 @@ UPSCALE_MODELS=(
 CONTROLNET_MODELS=( )
 
 DIFFUSION_MODELS=(
-
+   "https://civitai.com/api/download/models/2753918?type=Model&format=SafeTensor&size=full&fp=bf16"
   
 )
 
 TEXT_ENCODER_MODELS=(
-
+  "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors?download=true"
 
 )
 
