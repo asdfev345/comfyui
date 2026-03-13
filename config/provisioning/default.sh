@@ -50,7 +50,7 @@ UPSCALE_MODELS=(
 CONTROLNET_MODELS=( )
 
 DIFFUSION_MODELS=(
-   "https://civitai.com/api/download/models/2753918?type=Model&format=SafeTensor&size=full&fp=bf16"
+  "https://civitai.com/api/download/models/2753918?type=Model&format=SafeTensor&size=full&fp=bf16"
   
 )
 
