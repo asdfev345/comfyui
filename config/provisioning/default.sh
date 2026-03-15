@@ -267,7 +267,7 @@ provisioning_download_to_dir() {
   if [[ "$url" =~ civitai\.com ]]; then
     set +e
     if command -v aria2c >/dev/null 2>&1; then
-      aria2c -x 16 -s 16 -k 1M --content-disposition -d "$dir" "$final_url"
+      aria2c -x 4 -s 4 -k 1M --content-disposition -d "$dir" "$final_url"
       rc=$?
     elif command -v wget >/dev/null 2>&1; then
       wget --content-disposition --show-progress -qnc -P "$dir" "$final_url"
